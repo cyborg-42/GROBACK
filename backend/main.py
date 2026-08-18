@@ -4,13 +4,12 @@ from pydantic import BaseModel
 import json
 import io
 from PIL import Image
-import numpy as np
 
 import database
 
 app = FastAPI(title="GroBack AI-IoT Backend API", version="1.0.0")
 
-# Enable CORS for Flutter web & mobile clients
+# Enable CORS for Flutter web, mobile & emulator clients
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,7 +40,6 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Data Transfer Models
 class WeightUpdatePayload(BaseModel):
     quadrant: int
     weight_grams: float
@@ -91,7 +89,6 @@ async def update_weight(payload: WeightUpdatePayload):
     
     database.update_quadrant_weight(payload.quadrant, payload.weight_grams)
     
-    # Broadcast to connected Flutter client apps
     await manager.broadcast({
         "type": "WEIGHT_UPDATE",
         "quadrant": payload.quadrant,
@@ -127,7 +124,6 @@ async def scan_item(file: UploadFile = File(...)):
         image = Image.open(io.BytesIO(contents)).convert('RGB')
         image = image.resize((100, 100))
         
-        # Fallback prediction if CNN model is not loaded
         label = "Apple"
         confidence = 94.5
         
