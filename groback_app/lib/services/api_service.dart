@@ -1,11 +1,19 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import '../models/grocery_item.dart';
 
 class ApiService {
-  static const String baseUrl = "http://127.0.0.1:8000";
+  // Automatically select 10.0.2.2 for Android Emulator, 127.0.0.1 for Windows/Web
+  static String get baseUrl {
+    if (!kIsWeb && Platform.isAndroid) {
+      return "http://10.0.2.2:8000";
+    }
+    return "http://127.0.0.1:8000";
+  }
 
-  // Mock initial state for offline/demo mode
+  // Mock fallback state for demo/offline mode
   static final List<GroceryItem> _mockInventory = [
     GroceryItem(id: 1, quadrant: 1, itemName: "Apple", weightG: 450.0, maxCapacityG: 1000.0, status: "Available", lastUpdated: "2 mins ago"),
     GroceryItem(id: 2, quadrant: 2, itemName: "Banana", weightG: 180.0, maxCapacityG: 1000.0, status: "Low Stock", lastUpdated: "5 mins ago"),
@@ -26,9 +34,7 @@ class ApiService {
         final List data = jsonDecode(response.body);
         return data.map((e) => GroceryItem.fromJson(e)).toList();
       }
-    } catch (_) {
-      // Fallback to mock data if server is offline
-    }
+    } catch (_) {}
     return _mockInventory;
   }
 
@@ -54,7 +60,6 @@ class ApiService {
         return jsonDecode(response.body);
       }
     } catch (_) {}
-    // Update mock local state
     final index = _mockInventory.indexWhere((item) => item.quadrant == quadrant);
     if (index != -1) {
       final old = _mockInventory[index];
