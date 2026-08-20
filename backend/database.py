@@ -12,6 +12,12 @@ def create_tables():
     conn = get_connection()
     cursor = conn.cursor()
 
+    # Drop old incompatible schema if quadrant column is missing
+    cursor.execute("PRAGMA table_info(inventory)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if columns and "quadrant" not in columns:
+        cursor.execute("DROP TABLE inventory")
+
     # Inventory state per 4-Quadrant tray
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS inventory (
