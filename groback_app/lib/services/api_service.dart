@@ -112,4 +112,14 @@ class ApiService {
       DepletionMetric(itemName: "Orange", quadrant: 3, currentWeightG: 620, dailyRateG: 140, estimatedDaysRemaining: 4.4, stockStatus: "Sufficient"),
     ];
   }
+
+  static Future<Map<String, dynamic>> getInventorySummary() async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/api/v1/inventory/summary')).timeout(const Duration(seconds: 3));
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (_) {}
+    return {'total_items': 4, 'critical': 1, 'low_stock': 1};
+  }
 }
