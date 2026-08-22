@@ -58,8 +58,20 @@ def root():
     return {
         "status": "Online",
         "system": "GroBack AI-IoT Smart Shelf Backend",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "endpoints": [
+            "/api/v1/inventory",
+            "/api/v1/scans",
+            "/api/v1/depletion-analytics",
+            "/api/v1/update-weight",
+            "/api/v1/simulate-scan",
+            "/api/v1/scan-item",
+        ]
     }
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -73,6 +85,10 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/api/v1/inventory")
 def get_inventory():
     return database.get_all_inventory()
+
+@app.get("/api/v1/inventory/summary")
+def get_inventory_summary():
+    return database.get_inventory_summary()
 
 @app.get("/api/v1/scans")
 def get_recent_scans():
