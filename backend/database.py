@@ -123,6 +123,19 @@ def get_recent_scans(limit=10):
         ]
     return [dict(row) for row in rows]
 
+def get_inventory_summary():
+    """Returns a quick summary: total items, critical count, low stock count."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as total FROM inventory")
+    total = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM inventory WHERE status = 'Critical'")
+    critical = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM inventory WHERE status = 'Low Stock'")
+    low_stock = cursor.fetchone()[0]
+    conn.close()
+    return {"total_items": total, "critical": critical, "low_stock": low_stock}
+
 def get_depletion_analytics():
     inventory = get_all_inventory()
     rates = {
