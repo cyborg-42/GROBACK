@@ -11,6 +11,8 @@ class AppTheme {
   static const Color textSecondary = Color(0xFF5F7561); // Muted sage green
   static const Color accentOrange = Color(0xFFFF9800); // Low stock alert
   static const Color accentRed = Color(0xFFE53935); // Critical stock alert
+  static const Color accentBlue = Color(0xFF1565C0); // Info/highlight
+  static const Color divider = Color(0xFFE0E6E0); // Subtle divider
 
   static ThemeData get lightTheme {
     return ThemeData(
