@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# SQLite databases
+*.db
+*.sqlite3
+
+# Virtual environment
+.venv/
+
+# IDE
+.idea/workspace.xml
+.idea/caches/
+
+# OS
+.DS_Store
+Thumbs.db
