@@ -3,6 +3,8 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import '../models/grocery_item.dart';
+import '../models/scan_log.dart';
+import '../models/depletion_metric.dart';
 
 class ApiService {
   // Automatically select 10.0.2.2 for Android Emulator, 127.0.0.1 for Windows/Web
