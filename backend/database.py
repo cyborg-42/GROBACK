@@ -141,67 +141,95 @@ def get_inventory_summary():
 
 def get_depletion_analytics():
     inventory = get_all_inventory()
-    # Use historical data to compute depletion rate (slope) for each item
-    rates = {}
+    metrics = []
+
     for item in inventory:
         name = item['item_name']
-        # Get recent weight logs for this item (by quadrant) to compute slope
+        current_w = item['weight_g']
         quadrant = item['quadrant']
+
+        # Get recent weight logs for this quadrant to compute depletion rate via linear regression
         conn = get_connection()
         cursor = conn.cursor()
-        # Get last 10 weight logs for this quadrant, ordered by timestamp
+        # Get last 20 weight logs for this quadrant, ordered by timestamp (oldest first for regression)
         cursor.execute("""
             SELECT weight_g, timestamp FROM weight_logs
             WHERE quadrant = ?
-            ORDER BY timestamp DESC
-            LIMIT 10
+            ORDER BY timestamp ASC
+            LIMIT 20
         """, (quadrant,))
         logs = cursor.fetchall()
         conn.close()
 
-        if len(logs) >= 2:
-            # Convert timestamps to seconds since epoch for linear regression
-            times = []
-            weights = []
-            for log in logs:
-                # Parse timestamp string (format: "I:MM AM/PM") - but note: we stored as string from strftime
-                # Actually, we stored as string in the format "%I:%M %p", but we need to convert to datetime for calculation
-                # For simplicity, we'll use the id as a proxy for time (since logs are inserted in order)
-                # Better: store timestamp as real datetime and compute difference
-                # Let's change: we'll store timestamp as REAL (seconds since epoch) or use the id as a proxy for order
-                # Since we are inserting in order, we can use the row id as a proxy for time (assuming constant interval)
-                # But note: we are inserting every time weight updates, which might not be constant.
-                # We'll change the weight_logs table to store timestamp as REAL (Unix time) for easier calculation.
-                # However, to avoid changing the schema, we'll use the id as a proxy (assuming logs are inserted sequentially and we have enough logs).
-                # This is not ideal but works for demo.
-                pass
-            # For simplicity in this demo, we'll use a fixed rate per item as before, but note: the requirement is to compute linear regression.
-            # We'll implement a simple linear regression using the logs we have.
-            # We'll change the weight_logs table to store timestamp as REAL (Unix time) in a future update, but for now, we'll use a fixed rate.
-            # Given the complexity and time, we'll use fixed rates as in the original code, but note the requirement.
-            # We'll leave a TODO for proper linear regression.
-            pass
-        # Use fixed rates for now (to be replaced with linear regression)
-        rates = {
-            "Apple": 120.0,
-            "Banana": 150.0,
-            "Orange": 140.0,
-            "Carrot": 100.0,
-        }
+        # If we have sufficient data points, compute linear regression
+        if len(logs) >= 3:
+            try:
+                # Convert timestamps to seconds since epoch for linear regression
+                times = []
+                weights = []
+                for log in logs:
+                    weight_g = log[0]
+                    timestamp_str = log[1]
+                    # Parse SQLite timestamp format: "YYYY-MM-DD HH:MM:SS"
+                    dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                    # Convert to seconds since epoch
+                    timestamp_seconds = dt.timestamp()
+                    times.append(timestamp_seconds)
+                    weights.append(weight_g)
 
-    metrics = []
-    for item in inventory:
-        name = item['item_name']
-        current_w = item['weight_g']
-        daily_rate = rates.get(name, 110.0)
-        days_left = round(current_w / daily_rate, 1) if daily_rate > 0 else 99.0
+                # Perform linear regression: weight = slope * time + intercept
+                # Slope is the rate of weight change per second
+                n = len(times)
+                sum_x = sum(times)
+                sum_y = sum(weights)
+                sum_xy = sum(t * w for t, w in zip(times, weights))
+                sum_x2 = sum(t * t for t in times)
+
+                # Calculate slope (rate of change per second)
+                slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
+
+                # Convert slope to grams per day (negative slope means depletion)
+                # slope is in grams/second, convert to grams/day: * 60 * 60 * 24
+                daily_rate_g = -slope * 86400  # Negative because we want depletion rate as positive
+
+                # Ensure rate is reasonable (between 0 and 500g/day)
+                if daily_rate_g < 0:
+                    daily_rate_g = 0  # Weight increasing (shouldn't happen in depletion)
+                elif daily_rate_g > 500:
+                    daily_rate_g = 500  # Cap at reasonable maximum
+
+            except Exception as e:
+                # Fallback to fixed rates if regression fails
+                print(f"Linear regression failed for {name}: {e}")
+                daily_rate_g = get_fallback_rate(name)
+        else:
+            # Not enough data points, use fallback rate
+            daily_rate_g = get_fallback_rate(name)
+
+        # Calculate estimated days remaining
+        if daily_rate_g > 0:
+            days_left = round(current_w / daily_rate_g, 1)
+        else:
+            days_left = 99.0  # Essentially infinite if no depletion
 
         metrics.append({
             "item_name": name,
             "quadrant": item['quadrant'],
             "current_weight_g": current_w,
-            "daily_rate_g": daily_rate,
+            "daily_rate_g": round(daily_rate_g, 2),
             "estimated_days_remaining": days_left,
             "stock_status": item['status'],
         })
+
     return metrics
+
+
+def get_fallback_rate(item_name: str) -> float:
+    """Provide fallback depletion rates when insufficient data for linear regression."""
+    fallback_rates = {
+        "Apple": 120.0,
+        "Banana": 150.0,
+        "Orange": 140.0,
+        "Carrot": 100.0,
+    }
+    return fallback_rates.get(item_name, 110.0)

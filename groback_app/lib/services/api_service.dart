@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io' show Platform;
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import '../models/grocery_item.dart';
@@ -126,5 +127,30 @@ class ApiService {
       }
     } catch (_) {}
     return {'total_items': 4, 'critical': 1, 'low_stock': 1};
+  }
+
+  static Future<Map<String, dynamic>> scanItem(Uint8List imageBytes) async {
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/api/v1/scan-item'),
+      );
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          imageBytes,
+          filename: 'scan.jpg',
+        ),
+      );
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      // In case of error, return a default response
+      return {'status': 'error', 'detected_item': 'Unknown', 'confidence': 0.0};
+    }
+    return {'status': 'error', 'detected_item': 'Unknown', 'confidence': 0.0};
   }
 }

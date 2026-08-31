@@ -1,6 +1,8 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/api_service.dart';
+import 'package:camera/camera.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
@@ -15,6 +17,12 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _isScanning = false;
   String? _lastScannedResult;
 
+  // Camera-related variables
+  CameraController? _cameraController;
+  bool _isCameraInitialized = false;
+  String? _cameraError;
+  bool _isProcessing = false;
+
   final List<Map<String, dynamic>> _sampleFruits = [
     {'name': 'Apple', 'icon': '🍎', 'confidence': 96.4},
     {'name': 'Banana', 'icon': '🍌', 'confidence': 91.8},
@@ -22,21 +30,86 @@ class _ScanScreenState extends State<ScanScreen> {
     {'name': 'Carrot', 'icon': '🥕', 'confidence': 89.5},
   ];
 
-  Future<void> _executeScan() async {
-    setState(() => _isScanning = true);
-    await Future.delayed(const Duration(milliseconds: 800)); // Simulate camera processing delay
-    final result = await ApiService.simulateScan(_selectedProduce, _simulatedConfidence);
-    if (mounted) {
-      setState(() {
-        _isScanning = false;
-        _lastScannedResult = "${result['detected_item']} (${result['confidence']}%)";
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("✅ Identified $_selectedProduce with $_simulatedConfidence% confidence!"),
-          backgroundColor: AppTheme.primary,
-        ),
+  @override
+  void initState() {
+    super.initState();
+    _initializeCamera();
+  }
+
+  @override
+  void dispose() {
+    _cameraController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initializeCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        setState(() {
+          _cameraError = 'No cameras found';
+        });
+        return;
+      }
+      // Use the first camera (back camera if available, else front)
+      final CameraDescription camera = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
       );
+
+      _cameraController = CameraController(
+        camera,
+        ResolutionPreset.medium, // Use medium resolution for balance of quality and performance
+        enableAudio: false,
+      );
+
+      await _cameraController?.initialize();
+      if (!mounted) return;
+
+      setState(() {
+        _isCameraInitialized = true;
+      });
+    } on CameraException catch (e) {
+      setState(() {
+        _cameraError = 'Camera error: ${e.description}';
+      });
+    }
+  }
+
+  Future<void> _executeScan() async {
+    if (!_isCameraInitialized || _cameraController == null || _isProcessing) return;
+
+    setState(() => _isProcessing = true);
+    try {
+      // Take picture
+      final XFile file = await _cameraController!.takePicture();
+      final bytes = await file.readAsBytes();
+
+      // Send to backend for processing
+      final result = await ApiService.scanItem(bytes);
+
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _lastScannedResult = "${result['detected_item']} (${result['confidence']}%)";
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("✅ Identified ${result['detected_item']} with ${result['confidence']}% confidence!"),
+            backgroundColor: AppTheme.primary,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Error: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -45,7 +118,7 @@ class _ScanScreenState extends State<ScanScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          "ESP32-CAM Scanning Station",
+          "Phone Camera Scanning Station",
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
@@ -64,7 +137,7 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
             const SizedBox(height: 4),
             const Text(
-              "Position produce at the external scanning camera before placing into tray",
+              "Position produce in front of the camera and tap scan",
               style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
             ),
             const SizedBox(height: 20),
@@ -78,7 +151,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.15),
+                    color: Colors.black.withValues(alpha: 0.15),
                     blurRadius: 12,
                     offset: const Offset(0, 4),
                   ),
@@ -86,23 +159,20 @@ class _ScanScreenState extends State<ScanScreen> {
               ),
               child: Stack(
                 children: [
-                  // Center viewfinder item preview
-                  Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          _sampleFruits.firstWhere((e) => e['name'] == _selectedProduce)['icon'],
-                          style: const TextStyle(fontSize: 72),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          "Frame Aligned: $_selectedProduce",
-                          style: const TextStyle(color: Colors.white70, fontSize: 14),
-                        ),
-                      ],
+                  if (_cameraError != null)
+                    Center(
+                      child: Text(
+                        _cameraError!,
+                        style: const TextStyle(color: Colors.red, fontSize: 16),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  else if (_isCameraInitialized)
+                    CameraPreview(_cameraController!)
+                  else
+                    const Center(
+                      child: CircularProgressIndicator(color: AppTheme.primary),
                     ),
-                  ),
                   // Reticle corners
                   Positioned(
                     top: 20,
@@ -124,7 +194,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     right: 20,
                     child: _buildCorner(top: false, left: false),
                   ),
-                  if (_isScanning)
+                  if (_isProcessing)
                     const Center(
                       child: CircularProgressIndicator(color: AppTheme.primaryLight, strokeWidth: 4),
                     ),
@@ -135,7 +205,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
             // Sample Selector Grid
             const Text(
-              "Select Item to Scan (Simulation Mode)",
+              "Select Item to Scan (Reference)",
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
@@ -190,9 +260,9 @@ class _ScanScreenState extends State<ScanScreen> {
               width: double.infinity,
               height: 52,
               child: ElevatedButton.icon(
-                onPressed: _isScanning ? null : _executeScan,
+                onPressed: _isProcessing ? null : _executeScan,
                 icon: const Icon(Icons.camera_alt_rounded),
-                label: Text(_isScanning ? "Analyzing Frame with CNN..." : "Trigger ESP32-CAM Scan"),
+                label: Text(_isProcessing ? "Processing..." : "Scan Item"),
               ),
             ),
 
@@ -202,9 +272,9 @@ class _ScanScreenState extends State<ScanScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: AppTheme.primaryLight.withOpacity(0.15),
+                  color: AppTheme.primaryLight.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppTheme.primary.withOpacity(0.3)),
+                  border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
