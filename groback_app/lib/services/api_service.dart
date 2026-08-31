@@ -7,10 +7,13 @@ import '../models/scan_log.dart';
 import '../models/depletion_metric.dart';
 
 class ApiService {
-  // Automatically select 10.0.2.2 for Android Emulator, 127.0.0.1 for Windows/Web
+  // Your PC's active Wi-Fi IP address:
+  static const String serverIp = "10.214.49.46";
+
   static String get baseUrl {
     if (!kIsWeb && Platform.isAndroid) {
-      return "http://10.0.2.2:8000";
+      // Use your PC's IP so your physical phone can connect over Wi-Fi
+      return "http://$serverIp:8000";
     }
     return "http://127.0.0.1:8000";
   }
