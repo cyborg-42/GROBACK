@@ -10,14 +10,23 @@ class AppTheme {
   static const Color lowStockAlert = Color(0xFFFF9800); // Low Stock Alert
   static const Color criticalAlert = Color(0xFFE53935); // Critical Alert
 
+  // Aliases and text tokens
+  static const Color primary = forestEmerald;
+  static const Color primaryLight = mintLeaf;
+  static const Color primaryDark = darkGreen;
+  static const Color accentOrange = lowStockAlert;
+  static const Color accentRed = criticalAlert;
+  static const Color textPrimary = Color(0xFF1E293B);
+  static const Color textSecondary = Color(0xFF64748B);
+
   // Theme data
   static final ThemeData lightTheme = ThemeData(
     brightness: Brightness.light,
     primaryColor: forestEmerald,
-    colorScheme: ColorScheme.light(
+    colorScheme: const ColorScheme.light(
       primary: forestEmerald,
       secondary: mintLeaf,
-      background: background,
+      surface: card,
     ),
     scaffoldBackgroundColor: background,
     appBarTheme: const AppBarTheme(
@@ -25,7 +34,7 @@ class AppTheme {
       foregroundColor: Colors.white,
       elevation: 0,
     ),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: card,
       elevation: 4,
       shape: RoundedRectangleBorder(
@@ -44,8 +53,8 @@ class AppTheme {
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: card,
-      indicatorColor: forestEmerald.withOpacity(0.2),
-      labelTextStyle: MaterialStateProperty.all(
+      indicatorColor: forestEmerald.withValues(alpha: 0.2),
+      labelTextStyle: WidgetStateProperty.all(
         const TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w500,

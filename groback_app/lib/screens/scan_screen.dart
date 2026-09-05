@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/api_service.dart';
@@ -12,23 +11,13 @@ class ScanScreen extends StatefulWidget {
 }
 
 class _ScanScreenState extends State<ScanScreen> {
-  String _selectedProduce = 'Apple';
-  double _simulatedConfidence = 96.4;
-  bool _isScanning = false;
+  bool _isProcessing = false;
   String? _lastScannedResult;
 
   // Camera-related variables
   CameraController? _cameraController;
   bool _isCameraInitialized = false;
   String? _cameraError;
-  bool _isProcessing = false;
-
-  final List<Map<String, dynamic>> _sampleFruits = [
-    {'name': 'Apple', 'icon': '🍎', 'confidence': 96.4},
-    {'name': 'Banana', 'icon': '🍌', 'confidence': 91.8},
-    {'name': 'Orange', 'icon': '🍊', 'confidence': 94.2},
-    {'name': 'Carrot', 'icon': '🥕', 'confidence': 89.5},
-  ];
 
   @override
   void initState() {
@@ -203,58 +192,7 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
             const SizedBox(height: 24),
 
-            // Sample Selector Grid
-            const Text(
-              "Select Item to Scan (Reference)",
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: _sampleFruits.map((item) {
-                final isSelected = item['name'] == _selectedProduce;
-                return Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _selectedProduce = item['name'];
-                        _simulatedConfidence = item['confidence'];
-                      });
-                    },
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        color: isSelected ? AppTheme.primary : Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isSelected ? AppTheme.primary : Colors.grey.shade300,
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(item['icon'], style: const TextStyle(fontSize: 28)),
-                          const SizedBox(height: 4),
-                          Text(
-                            item['name'],
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: isSelected ? Colors.white : AppTheme.textPrimary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 24),
-
+            
             // Scan Action Button
             SizedBox(
               width: double.infinity,

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import '../models/grocery_item.dart';
+import '../models/depletion_metric.dart';
 import '../services/api_service.dart';
+import '../widgets/offline_banner.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
@@ -13,6 +14,7 @@ class AnalyticsScreen extends StatefulWidget {
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
   List<DepletionMetric> _metrics = [];
   bool _isLoading = true;
+  bool _isOnline = true;
 
   @override
   void initState() {
@@ -22,23 +24,24 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   Future<void> _loadMetrics() async {
     setState(() => _isLoading = true);
-    final metrics = await ApiService.getDepletionMetrics();
-    if (mounted) {
-      setState(() {
-        _metrics = metrics;
-        _isLoading = false;
-      });
-    }
+    final result = await ApiService.getDepletionMetrics();
+    if (!mounted) return;
+    setState(() {
+      _metrics = result.data;
+      _isOnline = result.isOnline;
+      _isLoading = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final shoppingList = _metrics.where((m) => m.estimatedDaysRemaining <= 2.0).toList();
+    final shoppingList =
+        _metrics.where((m) => m.estimatedDaysRemaining <= 2.0).toList();
 
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          "Consumption & Depletion Analytics",
+          'Consumption & Depletion Analytics',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
@@ -48,111 +51,178 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
-          : RefreshIndicator(
-              onRefresh: _loadMetrics,
-              color: AppTheme.primary,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Linear Regression Life Estimation",
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      "Calculated from daily load cell delta measurements (ΔW / Δt)",
-                      style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Depletion Forecast Cards
-                    ..._metrics.map(_buildMetricTile),
-                    const SizedBox(height: 24),
-
-                    // Automated Restocking Shopping List
-                    Container(
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.04),
-                            blurRadius: 8,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
-                      ),
+      body: Column(
+        children: [
+          OfflineBanner(visible: !_isOnline),
+          Expanded(
+            child: _isLoading
+                ? const Center(
+                    child: CircularProgressIndicator(color: AppTheme.primary))
+                : RefreshIndicator(
+                    onRefresh: _loadMetrics,
+                    color: AppTheme.primary,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(20),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: const [
-                              Icon(Icons.shopping_cart_outlined, color: AppTheme.primary, size: 22),
-                              SizedBox(width: 8),
-                              Text(
-                                "Auto Grocery Restock List",
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppTheme.textPrimary,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
                           const Text(
-                            "Items projected to run out within 2 days are automatically added:",
-                            style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                            'Linear Regression Life Estimation',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.textPrimary,
+                            ),
                           ),
-                          const SizedBox(height: 12),
-                          if (shoppingList.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 8),
-                              child: Text(
-                                "🎉 All items are sufficiently stocked! No restocking needed.",
-                                style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w600),
-                              ),
-                            )
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Calculated from daily load cell delta measurements (ΔW / Δt)',
+                            style: TextStyle(
+                                fontSize: 13, color: AppTheme.textSecondary),
+                          ),
+                          const SizedBox(height: 20),
+
+                          // Depletion Forecast Cards
+                          if (!_isOnline)
+                            _buildOfflineEmptyState()
+                          else if (_metrics.isEmpty)
+                            _buildNoDataState()
                           else
-                            ...shoppingList.map((item) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.check_box_outlined, color: AppTheme.accentOrange, size: 18),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        "${item.itemName} (Zone Q${item.quadrant})",
-                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                            ..._metrics.map(_buildMetricTile),
+
+                          const SizedBox(height: 24),
+
+                          // Auto Restock Shopping List
+                          Container(
+                            padding: const EdgeInsets.all(18),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.04),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: const [
+                                    Icon(Icons.shopping_cart_outlined,
+                                        color: AppTheme.primary, size: 22),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Auto Grocery Restock List',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppTheme.textPrimary,
                                       ),
-                                      const Spacer(),
-                                      Text(
-                                        "~${item.estimatedDaysRemaining.toStringAsFixed(1)} days left",
-                                        style: const TextStyle(
-                                          color: AppTheme.accentRed,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Items projected to run out within 2 days are automatically added:',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: AppTheme.textSecondary),
+                                ),
+                                const SizedBox(height: 12),
+                                if (!_isOnline)
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 8),
+                                    child: Text(
+                                      'No data — backend is offline.',
+                                      style: TextStyle(
+                                          color: AppTheme.textSecondary),
+                                    ),
+                                  )
+                                else if (shoppingList.isEmpty)
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 8),
+                                    child: Text(
+                                      '🎉 All items are sufficiently stocked! No restocking needed.',
+                                      style: TextStyle(
+                                          color: AppTheme.primary,
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  )
+                                else
+                                  ...shoppingList.map(
+                                    (item) => Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 8),
+                                      child: Row(
+                                        children: [
+                                          const Icon(
+                                              Icons.check_box_outlined,
+                                              color: AppTheme.accentOrange,
+                                              size: 18),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            '${item.itemName} (Zone Q${item.quadrant})',
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                          const Spacer(),
+                                          Text(
+                                            '~${item.estimatedDaysRemaining.toStringAsFixed(1)} days left',
+                                            style: const TextStyle(
+                                              color: AppTheme.accentRed,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ],
+                                    ),
                                   ),
-                                )),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOfflineEmptyState() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Center(
+        child: Column(
+          children: const [
+            Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey),
+            SizedBox(height: 12),
+            Text(
+              'No analytics data — backend is offline.',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoDataState() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 24),
+      child: Center(
+        child: Text(
+          'No depletion data yet. Weight readings will populate this section.',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+          textAlign: TextAlign.center,
+        ),
+      ),
     );
   }
 
@@ -169,7 +239,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -190,13 +260,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               ),
               const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppTheme.primary.withOpacity(0.1),
+                  color: AppTheme.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  "Q${metric.quadrant}",
+                  'Q${metric.quadrant}',
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
@@ -206,9 +277,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               ),
               const Spacer(),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: badgeColor.withOpacity(0.15),
+                  color: badgeColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -230,11 +302,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    "Est. Days Remaining",
-                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    'Est. Days Remaining',
+                    style:
+                        TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                   ),
                   Text(
-                    "${metric.estimatedDaysRemaining.toStringAsFixed(1)} Days",
+                    '${metric.estimatedDaysRemaining.toStringAsFixed(1)} Days',
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w900,
@@ -247,11 +320,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   const Text(
-                    "Daily Consumption Rate",
-                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    'Daily Consumption Rate',
+                    style:
+                        TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                   ),
                   Text(
-                    "${metric.dailyRateG.toInt()} g/day",
+                    '${metric.dailyRateG.toInt()} g/day',
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,

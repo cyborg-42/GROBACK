@@ -7,11 +7,11 @@ class DetectionCard extends StatelessWidget {
   final String timestamp;
 
   const DetectionCard({
-    Key? key,
+    super.key,
     required this.label,
     required this.confidence,
     required this.timestamp,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -25,7 +25,7 @@ class DetectionCard extends StatelessWidget {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: AppTheme.mintLeaf.withOpacity(0.2),
+                color: AppTheme.mintLeaf.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(

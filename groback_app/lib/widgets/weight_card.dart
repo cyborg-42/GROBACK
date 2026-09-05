@@ -9,13 +9,13 @@ class WeightCard extends StatelessWidget {
   final int quadrant;
 
   const WeightCard({
-    Key? key,
+    super.key,
     required this.label,
     required this.weight,
     required this.maxCapacity,
     required this.status,
     required this.quadrant,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +35,7 @@ class WeightCard extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: _getStatusColor(status).withOpacity(0.2),
+                    color: _getStatusColor(status).withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
