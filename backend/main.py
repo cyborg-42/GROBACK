@@ -5,7 +5,10 @@ import json
 import io
 from PIL import Image
 import numpy as np
-import tensorflow as tf
+try:
+    import tensorflow as tf
+except ImportError:
+    tf = None
 import database
 
 app = FastAPI(title="GroBack AI-IoT Backend API", version="1.0.0")
@@ -49,20 +52,56 @@ class SimulateScanPayload(BaseModel):
     label: str
     confidence: float
 
-# Load the pre-trained model (we'll use a simple placeholder for now)
-# In a real scenario, you would load a trained Keras model
-# model = tf.keras.models.load_model('path/to/model')
-# For now, we'll use a dummy model that returns random predictions
+# Class labels must match the order used during training
+CLASSES = ["Apple", "Banana", "Orange", "Carrot"]
+
+MODEL_PATH = "models/model.h5"
+
+# Load the pre-trained CNN model
+model = None
+
+def load_model():
+    global model
+    if tf is None:
+        print("TensorFlow not available, using color-based fallback model")
+        return
+    try:
+        import os
+        if os.path.exists(MODEL_PATH):
+            model = tf.keras.models.load_model(MODEL_PATH)
+            print(f"[SUCCESS] CNN model loaded successfully from {MODEL_PATH}")
+        else:
+            print(f"[WARNING] Model file not found at {MODEL_PATH}, using color-based fallback")
+            model = None
+    except Exception as e:
+        print(f"[WARNING] Failed to load CNN model: {e}")
+        print("   Falling back to color-based model")
+        model = None
+
+def model_predict(image):
+    # If we have a trained model, use it
+    if model is not None:
+        # Preprocess the image for the model
+        # Assuming the model expects 100x100x3 images normalized to [0,1]
+        img_array = np.array(image)
+        img_array = tf.image.resize(img_array, (100, 100))
+        img_array = img_array / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+
+        # Get predictions
+        predictions = model.predict(img_array, verbose=0)[0]
+
+        # Convert to dictionary with class names (order must match training)
+        return {CLASSES[i]: float(predictions[i]) for i in range(len(CLASSES))}
+    else:
+        # Fallback to color-based mock
+        return dummy_model_predict(image)
+
 def dummy_model_predict(image):
     # This is a placeholder - replace with actual model inference
     # For demonstration, we'll return a fixed set of predictions
     # In reality, you would preprocess the image and run it through your model
-    predictions = {
-        "Apple": 0.0,
-        "Banana": 0.0,
-        "Orange": 0.0,
-        "Carrot": 0.0
-    }
+    predictions = {cls: 0.0 for cls in CLASSES}
     # Simple color-based mock for demonstration
     img_array = np.array(image)
     # Calculate average color
@@ -90,7 +129,8 @@ def dummy_model_predict(image):
 @app.on_event("startup")
 def startup_event():
     database.create_tables()
-    print("✅ GroBack Database & Tables Initialized Successfully.")
+    load_model()  # Load the trained model
+    print("[SUCCESS] GroBack Database & Tables Initialized Successfully.")
 
 @app.get("/")
 def root():
@@ -179,8 +219,8 @@ async def scan_item(file: UploadFile = File(...)):
         image = Image.open(io.BytesIO(contents)).convert('RGB')
         image = image.resize((100, 100))
 
-        # Run model inference (placeholder)
-        predictions = dummy_model_predict(image)
+        # Run model inference
+        predictions = model_predict(image)
 
         # Get the top prediction
         label = max(predictions, key=predictions.get)

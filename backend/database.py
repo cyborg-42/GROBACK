@@ -118,12 +118,6 @@ def get_recent_scans(limit=10):
     cursor.execute("SELECT * FROM scan_logs ORDER BY id DESC LIMIT ?", (limit,))
     rows = cursor.fetchall()
     conn.close()
-    if not rows:
-        return [
-            {"id": 1, "label": "Apple", "confidence": 96.4, "timestamp": "10:30 AM"},
-            {"id": 2, "label": "Orange", "confidence": 92.1, "timestamp": "10:15 AM"},
-            {"id": 3, "label": "Banana", "confidence": 88.7, "timestamp": "09:45 AM"},
-        ]
     return [dict(row) for row in rows]
 
 def get_inventory_summary():
