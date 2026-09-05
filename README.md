@@ -88,10 +88,10 @@ flutter run -d windows
 
 ### Note on Backend Connection
 The Flutter app automatically selects the correct backend URL:
-- `http://10.0.2.2:8000` when running on Android Emulator/Device
+- `http://10.0.2.2:8000` when running on Android Emulator (uses special alias to connect to host's localhost)
 - `http://127.0.0.1:8000` when running on Web or Desktop (Windows/macOS/Linux)
 
-If you are running the Flutter app on a physical device and the backend is on your development machine, ensure both are on the same Wi-Fi network and use your machine's local IP address in the `baseUrl` getter in `lib/services/api_service.dart` if needed (though the current code uses localhost for non-Android, which won't work for physical devices). For physical device testing, you may want to adjust the `baseUrl` to point to your machine's IP (e.g., `return "http://192.168.1.100:8000";`).
+For physical Android devices on Wi-Fi, you need to replace `10.0.2.2` with your machine's local IP address in `lib/services/api_service.dart` (look for the `serverIp` constant). Ensure both your device and development machine are on the same Wi-Fi network.
 
 ## Demo Instructions
 
