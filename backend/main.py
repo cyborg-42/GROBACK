@@ -3,12 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
 import io
+import os
 from PIL import Image
 import numpy as np
 try:
     import tensorflow as tf
+    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input as mobilenet_preprocess
 except ImportError:
     tf = None
+    mobilenet_preprocess = None
 import database
 
 app = FastAPI(title="GroBack AI-IoT Backend API", version="1.0.0")
@@ -52,8 +55,11 @@ class SimulateScanPayload(BaseModel):
     label: str
     confidence: float
 
-# Class labels must match the order used during training
-CLASSES = ["Apple", "Banana", "Orange", "Carrot"]
+# Class labels — alphabetical order, must match train_mobilenet.py exactly
+CLASSES = ["Apple", "Banana", "Carrot", "Orange"]
+
+# Input size — must match train_mobilenet.py IMG_SIZE
+IMG_SIZE = 128
 
 MODEL_PATH = "models/model.h5"
 
@@ -79,22 +85,20 @@ def load_model():
         model = None
 
 def model_predict(image):
-    # If we have a trained model, use it
+    """
+    Run inference on a PIL Image.
+    Preprocessing matches train_mobilenet.py exactly:
+      - Resize to IMG_SIZE x IMG_SIZE (128x128)
+      - MobileNetV2 preprocess_input scales pixels to [-1, 1]
+    Falls back to color heuristic if no model is loaded.
+    """
     if model is not None:
-        # Preprocess the image for the model
-        # Assuming the model expects 100x100x3 images normalized to [0,1]
-        img_array = np.array(image)
-        img_array = tf.image.resize(img_array, (100, 100))
-        img_array = img_array / 255.0
-        img_array = np.expand_dims(img_array, axis=0)
-
-        # Get predictions
+        img_array = np.array(image.resize((IMG_SIZE, IMG_SIZE)), dtype=np.float32)
+        img_array = mobilenet_preprocess(img_array)          # [-1, 1] scaling
+        img_array = np.expand_dims(img_array, axis=0)        # (1, 128, 128, 3)
         predictions = model.predict(img_array, verbose=0)[0]
-
-        # Convert to dictionary with class names (order must match training)
         return {CLASSES[i]: float(predictions[i]) for i in range(len(CLASSES))}
     else:
-        # Fallback to color-based mock
         return dummy_model_predict(image)
 
 def dummy_model_predict(image):
@@ -216,10 +220,10 @@ async def simulate_scan(payload: SimulateScanPayload):
 async def scan_item(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        image = Image.open(io.BytesIO(contents)).convert('RGB')
-        image = image.resize((100, 100))
+        # Decode image — resize is handled inside model_predict to IMG_SIZE
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
 
-        # Run model inference
+        # Run model inference (preprocessing matched to training pipeline)
         predictions = model_predict(image)
 
         # Get the top prediction
