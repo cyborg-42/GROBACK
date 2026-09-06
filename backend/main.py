@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
 import io
+import asyncio
 import numpy as np
 from PIL import Image
 import database
@@ -52,22 +53,20 @@ def get_yolo():
     return yolo_model
 
 
-def run_yolo(image: Image.Image):
+def _run_yolo_sync(image: Image.Image):
     """
-    Run YOLOv8 on a PIL image and return (label, confidence).
-
-    - Scans all detected bounding boxes.
-    - Keeps only boxes whose COCO class maps to a target produce item.
-    - Returns the highest-confidence produce detection.
-    - Returns ("No Produce Detected", 0.0) when nothing matches.
+    Synchronous YOLO inference — runs in a thread pool via asyncio.
+    Converts PIL Image to numpy array (what ultralytics actually expects).
+    Returns (label, confidence_percent).
     """
     model = get_yolo()
-
     if model is None:
-        # ultralytics not installed — return a clearly labelled fallback
         return "No Produce Detected", 0.0
 
-    results = model(image, conf=CONF_THRESHOLD, verbose=False)
+    # Convert PIL → numpy RGB array (HxWx3 uint8) — ultralytics native format
+    img_array = np.array(image)
+
+    results = model(img_array, conf=CONF_THRESHOLD, verbose=False)
 
     best_label = "No Produce Detected"
     best_conf  = 0.0
@@ -82,6 +81,17 @@ def run_yolo(image: Image.Image):
                     best_label = COCO_TO_PRODUCE[coco_name]
 
     return best_label, round(best_conf * 100, 2)
+
+
+async def run_yolo(image: Image.Image):
+    """
+    Async wrapper: offloads CPU-bound YOLO inference to a thread pool
+    so the FastAPI event loop is never blocked.
+    Other requests (weight updates, WebSocket pings) remain responsive
+    during a scan even on slow CPU hardware.
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _run_yolo_sync, image)
 
 
 # ─── Delta-binding: pending scan buffer ───────────────────────────────────────
@@ -404,7 +414,7 @@ async def scan_item(file: UploadFile = File(...)):
         contents = await file.read()
         image    = Image.open(io.BytesIO(contents)).convert("RGB")
 
-        label, confidence = run_yolo(image)
+        label, confidence = await run_yolo(image)
 
         # Set pending buffer so update-weight can bind this item to a quadrant
         if label != "No Produce Detected":

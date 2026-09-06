@@ -123,7 +123,10 @@ void setup() {
     delay(100);
     if (scales[i].is_ready()) {
       scales[i].set_gain(128);
-      Serial.printf("  [OK] Q%d — DT=GPIO%d, CLK=GPIO%d\n", i+1, DT_PINS[i], CLK_PIN);
+      // Apply calibration factor — get_units() will return grams directly
+      scales[i].set_scale(CALIBRATION_FACTORS[i]);
+      Serial.printf("  [OK] Q%d — DT=GPIO%d, CLK=GPIO%d, cal=%.6f\n",
+                    i+1, DT_PINS[i], CLK_PIN, CALIBRATION_FACTORS[i]);
       readyCount++;
     } else {
       Serial.printf("  [!!] Q%d — NOT DETECTED (DT=GPIO%d) — check wiring\n",
@@ -184,14 +187,10 @@ void loop() {
       continue;
     }
 
-    // Average AVERAGES readings to reduce HX711 noise
-    float raw  = scales[i].get_units(AVERAGES);
-    // Clamp negatives to zero (tray empty, sensor drift below tare)
-    weights[i] = max(0.0f, raw * CALIBRATION_FACTORS[i] / 0.000418f);
-    // Note: dividing by the default factor and multiplying by CALIBRATION_FACTORS[i]
-    // because get_units() already applies the scale factor set via set_scale().
-    // If you use scales[i].set_scale(CALIBRATION_FACTORS[i]) in setup instead,
-    // simplify to: weights[i] = max(0.0f, scales[i].get_units(AVERAGES));
+    // Average AVERAGES readings — get_units() applies set_scale() internally
+    // returning grams directly. Clamp negatives to 0 (tare drift).
+    float raw = scales[i].get_units(AVERAGES);
+    weights[i] = max(0.0f, raw);
   }
 
   // ── Determine which quadrants need a POST ───────────────────────────────
