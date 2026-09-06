@@ -1,28 +1,23 @@
 """
 train_mobilenet.py
-GroBack AI-IoT Smart Shelf — Produce Classifier Training Script
-================================================================
-Trains a MobileNetV2 transfer-learning model to classify:
-    Apple | Banana | Carrot | Orange
+GroBack AI-IoT Smart Shelf — Banana Classifier Training Script
+==============================================================
+Binary classifier: Banana  |  Empty (no produce on shelf)
 
-Dataset layout expected (create these folders manually and drop
-your photos in — 40-60 JPG/PNG images per class is enough):
+Dataset layout — put YOUR photos here before running:
 
     backend/
     └── dataset/
-        ├── Apple/      (e.g. apple1.jpg, apple2.jpg ...)
-        ├── Banana/
-        ├── Carrot/
-        └── Orange/
+        ├── Banana/   ← 30-40 photos of your banana at different angles
+        └── Empty/    ← 30-40 photos of the empty shelf/tray
 
-Output:  backend/models/model.h5
+Minimum: 30 images per folder (60 total).
+More photos = better accuracy.
 
 Run from the backend/ directory:
     python train_mobilenet.py
 
-Dependencies (install once):
-    pip install tensorflow pillow
-    pip install bing-image-downloader   # only needed for auto-download
+Output: backend/models/model.h5
 """
 
 import os
@@ -37,96 +32,71 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-CLASSES        = ["Apple", "Banana", "Carrot", "Orange"]   # must stay alphabetical for ImageDataGenerator
-IMG_SIZE       = 128          # MobileNetV2 input: 128×128
-BATCH_SIZE     = 16
-EPOCHS         = 12
-LEARNING_RATE  = 0.0005
-EARLY_STOP_PAT = 3
-DATASET_DIR    = pathlib.Path("dataset")
-MODEL_OUT      = pathlib.Path("models/model.h5")
-IMAGES_PER_CLASS = 50         # target count for auto-download
+CLASSES       = ["Banana", "Empty"]   # alphabetical so ImageDataGenerator matches
+IMG_SIZE      = 128
+BATCH_SIZE    = 8                     # small batch since dataset is small
+EPOCHS        = 15
+LEARNING_RATE = 0.0005
+EARLY_STOP_PAT = 4
+DATASET_DIR   = pathlib.Path("dataset")
+MODEL_OUT     = pathlib.Path("models/model.h5")
+MIN_IMAGES    = 30                    # minimum per class before training starts
 
-# ─── 1. Auto-download dataset (if folders are missing or empty) ────────────────
-
-def download_dataset():
-    """
-    Uses bing-image-downloader to fetch ~IMAGES_PER_CLASS images per class.
-    Skips any class folder that already has enough images.
-    """
-    try:
-        from bing_image_downloader import downloader
-    except ImportError:
-        print("[INFO] bing-image-downloader not installed.")
-        print("       Run:  pip install bing-image-downloader")
-        print("       Or manually place images in dataset/<ClassName>/")
-        return
-
-    for cls in CLASSES:
-        cls_dir = DATASET_DIR / cls
-        existing = list(cls_dir.glob("*.[jJpP][pPnN][gG]*")) if cls_dir.exists() else []
-        if len(existing) >= IMAGES_PER_CLASS:
-            print(f"[SKIP] {cls}: {len(existing)} images already present.")
-            continue
-        needed = IMAGES_PER_CLASS - len(existing)
-        print(f"[DOWNLOAD] Fetching {needed} images for '{cls}'...")
-        downloader.download(
-            f"{cls} fruit vegetable",
-            limit=IMAGES_PER_CLASS,
-            output_dir=str(DATASET_DIR),
-            adult_filter_off=True,
-            force_replace=False,
-            timeout=60,
-            verbose=False,
-        )
-        # bing-image-downloader saves to a subfolder named after the query;
-        # rename it to the clean class name if needed.
-        query_folder = DATASET_DIR / f"{cls} fruit vegetable"
-        if query_folder.exists() and not cls_dir.exists():
-            query_folder.rename(cls_dir)
-
+# ─── 1. Verify dataset ────────────────────────────────────────────────────────
 
 def verify_dataset():
-    """
-    Checks that each class folder exists and has at least 10 images.
-    Exits with a helpful message if not.
-    """
+    print(f"\n[STEP 1] Checking dataset at: {DATASET_DIR.resolve()}\n")
     ok = True
     for cls in CLASSES:
         cls_dir = DATASET_DIR / cls
-        imgs = list(cls_dir.glob("*.[jJpP][pPnN][gG]*")) if cls_dir.exists() else []
+        imgs = []
+        if cls_dir.exists():
+            for ext in ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"):
+                imgs.extend(cls_dir.glob(ext))
         count = len(imgs)
-        status = "OK" if count >= 10 else "MISSING / TOO FEW"
-        print(f"  [{status}] {cls:10s}: {count} images  ({cls_dir})")
-        if count < 10:
+        status = "OK" if count >= MIN_IMAGES else "NEED MORE PHOTOS"
+        print(f"  [{status}]  {cls:10s}: {count} images  →  {cls_dir}")
+        if count < MIN_IMAGES:
             ok = False
+
     if not ok:
-        print("\n[ERROR] Some classes have too few images.")
-        print("  Add at least 10 JPG/PNG images per class and re-run.\n")
+        print(f"""
+[ERROR] Not enough images.
+
+  You need at least {MIN_IMAGES} photos per folder:
+
+    backend/dataset/Banana/   ← photos of your banana
+    backend/dataset/Empty/    ← photos of empty shelf
+
+  How to add photos:
+    1. Take photos with your phone camera
+    2. Transfer them to the folders above (USB / WhatsApp / Google Photos)
+    3. Re-run:  python train_mobilenet.py
+""")
         sys.exit(1)
 
+    print("\n  Dataset looks good — starting training!\n")
 
-# ─── 2. Data generators with augmentation ─────────────────────────────────────
+
+# ─── 2. Data generators ───────────────────────────────────────────────────────
 
 def build_generators():
     """
-    Returns (train_gen, val_gen) using an 80/20 split.
-    Augmentation is applied only to training images.
-    Preprocessing matches MobileNetV2: pixel values scaled to [-1, 1].
+    80/20 train/val split with aggressive augmentation on training images.
+    preprocess_input scales pixels to [-1, 1] to match MobileNetV2 expectations.
     """
     train_datagen = ImageDataGenerator(
-        preprocessing_function=preprocess_input,  # MobileNetV2 [-1,1] scaling
+        preprocessing_function=preprocess_input,
         validation_split=0.2,
         rotation_range=30,
         width_shift_range=0.15,
         height_shift_range=0.15,
         zoom_range=0.20,
         horizontal_flip=True,
-        brightness_range=[0.8, 1.2],
+        brightness_range=[0.7, 1.3],  # wider range helps with shelf lighting variation
         fill_mode="nearest",
     )
 
-    # Validation: only preprocessing, no augmentation
     val_datagen = ImageDataGenerator(
         preprocessing_function=preprocess_input,
         validation_split=0.2,
@@ -140,7 +110,7 @@ def build_generators():
         subset="training",
         shuffle=True,
         seed=42,
-        classes=CLASSES,   # fix the label order to match CLASSES list
+        classes=CLASSES,
     )
 
     val_gen = val_datagen.flow_from_directory(
@@ -154,52 +124,43 @@ def build_generators():
         classes=CLASSES,
     )
 
-    print(f"\n[DATA] Train samples : {train_gen.samples}")
-    print(f"[DATA] Val   samples : {val_gen.samples}")
-    print(f"[DATA] Class indices : {train_gen.class_indices}")
+    print(f"  Class map : {train_gen.class_indices}")
+    print(f"  Train     : {train_gen.samples} images")
+    print(f"  Validation: {val_gen.samples} images\n")
     return train_gen, val_gen
 
 
-# ─── 3. Build MobileNetV2 model ───────────────────────────────────────────────
+# ─── 3. Build model ───────────────────────────────────────────────────────────
 
 def build_model():
-    """
-    MobileNetV2 base (ImageNet weights, frozen) + custom classification head.
-    """
-    base_model = MobileNetV2(
+    base = MobileNetV2(
         input_shape=(IMG_SIZE, IMG_SIZE, 3),
-        include_top=False,          # remove ImageNet softmax head
+        include_top=False,
         weights="imagenet",
     )
-    base_model.trainable = False    # freeze all base layers for fast CPU training
+    base.trainable = False   # freeze — fast CPU training
 
     inputs = tf.keras.Input(shape=(IMG_SIZE, IMG_SIZE, 3))
-    x = base_model(inputs, training=False)  # run in inference mode even during train
+    x = base(inputs, training=False)
     x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dense(128, activation="relu")(x)
+    x = layers.Dense(64, activation="relu")(x)   # smaller head for 2-class problem
     x = layers.BatchNormalization()(x)
     x = layers.Dropout(0.4)(x)
     outputs = layers.Dense(len(CLASSES), activation="softmax")(x)
 
-    model = models.Model(inputs, outputs, name="groback_mobilenetv2")
-
+    model = models.Model(inputs, outputs, name="groback_banana_classifier")
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
         loss="categorical_crossentropy",
         metrics=["accuracy"],
     )
-
-    print("\n[MODEL] Architecture summary:")
-    model.summary(line_length=80)
+    print(f"  Parameters: {model.count_params():,}")
     return model
 
 
 # ─── 4. Train ─────────────────────────────────────────────────────────────────
 
 def train(model, train_gen, val_gen):
-    """
-    Trains with EarlyStopping and saves the best checkpoint.
-    """
     MODEL_OUT.parent.mkdir(parents=True, exist_ok=True)
 
     cbs = [
@@ -224,7 +185,7 @@ def train(model, train_gen, val_gen):
         ),
     ]
 
-    print(f"\n[TRAIN] Starting training for up to {EPOCHS} epochs...")
+    print(f"[TRAIN] Training for up to {EPOCHS} epochs...\n")
     history = model.fit(
         train_gen,
         validation_data=val_gen,
@@ -235,56 +196,52 @@ def train(model, train_gen, val_gen):
     return history
 
 
-# ─── 5. Post-training report ──────────────────────────────────────────────────
+# ─── 5. Report ────────────────────────────────────────────────────────────────
 
 def print_report(history):
-    best_val_acc = max(history.history.get("val_accuracy", [0])) * 100
-    best_train_acc = max(history.history.get("accuracy", [0])) * 100
-    epochs_run = len(history.history.get("accuracy", []))
+    best_val  = max(history.history.get("val_accuracy", [0])) * 100
+    best_train = max(history.history.get("accuracy", [0])) * 100
+    n_epochs  = len(history.history.get("accuracy", []))
 
-    print("\n" + "=" * 60)
-    print("  GroBack MobileNetV2 Training Complete")
-    print("=" * 60)
-    print(f"  Epochs run        : {epochs_run}")
-    print(f"  Best train acc    : {best_train_acc:.1f}%")
-    print(f"  Best val   acc    : {best_val_acc:.1f}%")
-    print(f"  Model saved to    : {MODEL_OUT.resolve()}")
-    print("=" * 60)
+    print("\n" + "=" * 55)
+    print("  GroBack Banana Classifier — Training Complete")
+    print("=" * 55)
+    print(f"  Epochs run      : {n_epochs}")
+    print(f"  Best train acc  : {best_train:.1f}%")
+    print(f"  Best val acc    : {best_val:.1f}%")
+    print(f"  Model saved to  : {MODEL_OUT.resolve()}")
+    print("=" * 55)
 
-    if best_val_acc < 70:
-        print("\n[WARN] Validation accuracy is below 70%.")
-        print("       Try adding more images (aim for 60+ per class) and re-run.")
+    if best_val < 75:
+        print("\n[WARN] Accuracy below 75% — try adding more photos and re-run.")
+    elif best_val < 90:
+        print("\n[OK] Good accuracy. Add more varied photos to push above 90%.")
     else:
-        print("\n[OK] Model is ready. Run test_prediction.py to verify.")
+        print("\n[GREAT] Model ready for deployment!")
+
+    print("\nNext step: python test_prediction.py <path_to_photo>\n")
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("  GroBack — MobileNetV2 Produce Classifier Trainer")
-    print("=" * 60)
+    print("=" * 55)
+    print("  GroBack — Banana Shelf Classifier Trainer")
+    print("=" * 55)
 
-    # Step 1: ensure dataset exists
-    print(f"\n[STEP 1] Checking dataset at: {DATASET_DIR.resolve()}")
-    DATASET_DIR.mkdir(parents=True, exist_ok=True)
+    # Create folders if they don't exist yet
     for cls in CLASSES:
-        (DATASET_DIR / cls).mkdir(exist_ok=True)
+        (DATASET_DIR / cls).mkdir(parents=True, exist_ok=True)
 
-    download_dataset()
     verify_dataset()
 
-    # Step 2: build data pipelines
-    print("\n[STEP 2] Building data generators...")
+    print("[STEP 2] Building data generators...")
     train_gen, val_gen = build_generators()
 
-    # Step 3: build model
-    print("\n[STEP 3] Building MobileNetV2 model...")
+    print("[STEP 3] Building MobileNetV2 model...")
     model = build_model()
 
-    # Step 4: train
-    print("\n[STEP 4] Training...")
+    print("[STEP 4] Training...")
     history = train(model, train_gen, val_gen)
 
-    # Step 5: report
     print_report(history)

@@ -55,8 +55,8 @@ class SimulateScanPayload(BaseModel):
     label: str
     confidence: float
 
-# Class labels — alphabetical order, must match train_mobilenet.py exactly
-CLASSES = ["Apple", "Banana", "Carrot", "Orange"]
+# Class labels — alphabetical, must match train_mobilenet.py CLASSES exactly
+CLASSES = ["Banana", "Empty"]
 
 # Input size — must match train_mobilenet.py IMG_SIZE
 IMG_SIZE = 128
@@ -75,7 +75,11 @@ def load_model():
         import os
         if os.path.exists(MODEL_PATH):
             model = tf.keras.models.load_model(MODEL_PATH)
-            print(f"[SUCCESS] CNN model loaded successfully from {MODEL_PATH}")
+            actual_size = model.input_shape[1]
+            print(f"[SUCCESS] CNN model loaded from {MODEL_PATH} (input: {actual_size}×{actual_size})")
+            # Override IMG_SIZE globally so model_predict uses the right resolution
+            global IMG_SIZE
+            IMG_SIZE = actual_size
         else:
             print(f"[WARNING] Model file not found at {MODEL_PATH}, using color-based fallback")
             model = None
@@ -90,45 +94,37 @@ def model_predict(image):
     Preprocessing matches train_mobilenet.py exactly:
       - Resize to IMG_SIZE x IMG_SIZE (128x128)
       - MobileNetV2 preprocess_input scales pixels to [-1, 1]
-    Falls back to color heuristic if no model is loaded.
+    Falls back to colour heuristic if no model is loaded.
+    Uses the model's actual output size so old and new checkpoints both work.
     """
     if model is not None:
         img_array = np.array(image.resize((IMG_SIZE, IMG_SIZE)), dtype=np.float32)
-        img_array = mobilenet_preprocess(img_array)          # [-1, 1] scaling
-        img_array = np.expand_dims(img_array, axis=0)        # (1, 128, 128, 3)
+        img_array = mobilenet_preprocess(img_array)
+        img_array = np.expand_dims(img_array, axis=0)
         predictions = model.predict(img_array, verbose=0)[0]
-        return {CLASSES[i]: float(predictions[i]) for i in range(len(CLASSES))}
+        # Use model output length in case checkpoint has different num classes
+        n = min(len(predictions), len(CLASSES))
+        return {CLASSES[i]: float(predictions[i]) for i in range(n)}
     else:
         return dummy_model_predict(image)
 
+
 def dummy_model_predict(image):
-    # This is a placeholder - replace with actual model inference
-    # For demonstration, we'll return a fixed set of predictions
-    # In reality, you would preprocess the image and run it through your model
-    predictions = {cls: 0.0 for cls in CLASSES}
-    # Simple color-based mock for demonstration
-    img_array = np.array(image)
-    # Calculate average color
-    avg_color_per_row = np.mean(img_array, axis=0)
-    avg_color = np.mean(avg_color_per_row, axis=0)
-    r, g, b = avg_color
+    """
+    Colour-based fallback when no model is loaded.
+    Bananas are yellow (high R+G, low B) — everything else is Empty shelf.
+    """
+    img_array = np.array(image.resize((IMG_SIZE, IMG_SIZE)))
+    avg = np.mean(img_array.reshape(-1, 3), axis=0)
+    r, g, b = avg
 
-    # Assign scores based on color
-    if r > 150 and g < 100 and b < 100:  # Reddish
-        predictions["Apple"] = 0.8 + (r - 150) / 100 * 0.2
-    elif r > 130 and g > 130 and b < 100:  # Yellowish
-        predictions["Banana"] = 0.7 + (g - 130) / 100 * 0.3
-    elif r > 140 and g > 80 and b < 80:   # Orangish
-        predictions["Orange"] = 0.75 + (r - 140) / 100 * 0.25
-    else:  # Greenish or else
-        predictions["Carrot"] = 0.6 + min(g, 100) / 100 * 0.4
+    # Yellow heuristic: high red + high green, low blue
+    banana_score = 0.0
+    if r > 150 and g > 130 and b < 120:
+        banana_score = min(0.5 + (g - 130) / 200, 0.95)
 
-    # Normalize to make sure they sum to 1 (approximately)
-    total = sum(predictions.values())
-    if total > 0:
-        predictions = {k: v/total for k, v in predictions.items()}
-
-    return predictions
+    empty_score = 1.0 - banana_score
+    return {"Banana": banana_score, "Empty": empty_score}
 
 @app.on_event("startup")
 def startup_event():
