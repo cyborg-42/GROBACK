@@ -122,6 +122,60 @@ def update_quadrant_weight(quadrant: int, weight_g: float) -> dict:
 
     return {"status": status, "item_name": item_name}
 
+def get_quadrant(quadrant: int) -> dict:
+    """Return the current inventory row for a single quadrant."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM inventory WHERE quadrant = ?", (quadrant,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else {}
+
+
+def update_quadrant_item(quadrant: int, item_name: str, weight_g: float) -> dict:
+    """
+    Delta-binding: assign a newly scanned item to a specific quadrant and
+    record its weight in one atomic operation.
+
+    Called by the update-weight endpoint when a positive weight delta is
+    detected immediately after a camera scan (pending_scan is set).
+
+    Returns the same {status, item_name} dict as update_quadrant_weight so
+    the caller can broadcast a consistent payload.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    if weight_g == 0:
+        status = "Depleted"
+    elif weight_g < 100:
+        status = "Critical"
+    elif weight_g < 250:
+        status = "Low Stock"
+    else:
+        status = "Available"
+
+    now_str = datetime.now().strftime("%I:%M %p")
+
+    # Update both the item name AND the weight in one shot
+    cursor.execute(
+        """UPDATE inventory
+              SET item_name = ?, weight_g = ?, status = ?, last_updated = ?
+            WHERE quadrant = ?""",
+        (item_name, weight_g, status, now_str, quadrant),
+    )
+    cursor.execute(
+        "INSERT INTO weight_logs (quadrant, weight_g) VALUES (?, ?)",
+        (quadrant, weight_g),
+    )
+
+    conn.commit()
+    conn.close()
+
+    print(f"[BIND] Quadrant {quadrant} → {item_name} ({weight_g}g, {status})")
+    return {"status": status, "item_name": item_name}
+
+
 def log_scan_result(label: str, confidence: float):
     conn = get_connection()
     cursor = conn.cursor()
