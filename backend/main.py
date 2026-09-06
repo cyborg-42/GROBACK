@@ -84,6 +84,39 @@ def run_yolo(image: Image.Image):
     return best_label, round(best_conf * 100, 2)
 
 
+# ─── Delta-binding: pending scan buffer ───────────────────────────────────────
+# Lifecycle:
+#   Step 1 — User scans produce at the camera station → pending_scan is set
+#   Step 2 — User places produce on a tray → ESP32 posts a weight increase
+#   Step 3 — update-weight detects ΔW > 30g and pending_scan is set
+#            → auto-binds the scanned item to that quadrant
+#
+# The buffer expires after PENDING_SCAN_TTL_SECONDS to prevent a stale scan
+# from incorrectly binding to a weight change that happens much later.
+
+import time as _time
+
+PENDING_SCAN_TTL_SECONDS = 30   # scan must be placed within 30 s
+
+pending_scan: dict = {
+    "item":       None,    # e.g. "Banana"
+    "confidence": 0.0,
+    "timestamp":  None,    # _time.time() float
+}
+
+def _clear_pending():
+    pending_scan["item"]       = None
+    pending_scan["confidence"] = 0.0
+    pending_scan["timestamp"]  = None
+
+def _pending_is_valid() -> bool:
+    """True if a scan is waiting and hasn't expired yet."""
+    if pending_scan["item"] is None:
+        return False
+    age = _time.time() - (pending_scan["timestamp"] or 0)
+    return age <= PENDING_SCAN_TTL_SECONDS
+
+
 # ─── FastAPI app ───────────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -162,6 +195,7 @@ def root():
         "vision":  "YOLOv8n (COCO pretrained)",
         "endpoints": [
             "/api/v1/scan-item",
+            "/api/v1/pending-scan",
             "/api/v1/inventory",
             "/api/v1/scans",
             "/api/v1/depletion-analytics",
@@ -210,18 +244,75 @@ def get_depletion_analytics():
     return database.get_depletion_analytics()
 
 
-# ─── Weight telemetry (ESP32 HX711) ───────────────────────────────────────────
+# ─── Weight telemetry (ESP32 HX711) + delta-binding ──────────────────────────
+
+# Minimum positive weight delta (grams) to treat as a new item placement.
+# Filters out sensor noise and vibration.
+DELTA_THRESHOLD_ADD    =  30.0   # +30 g → item placed
+DELTA_THRESHOLD_REMOVE = -10.0   # -10 g → consumption / removal
 
 @app.post("/api/v1/update-weight")
 async def update_weight(payload: WeightUpdatePayload):
+    """
+    Receives weight telemetry from the ESP32 HX711 sensors.
+
+    Delta-binding algorithm:
+      Case 1 — ΔW > +30g AND pending scan exists (TTL valid)
+               → auto-bind scanned item to this quadrant
+      Case 2 — ΔW > +30g but NO pending scan
+               → weight increased without a scan (manual placement or error)
+                 just update the weight, keep existing item_name
+      Case 3 — ΔW < -10g
+               → consumption detected, update weight only
+
+    All cases broadcast WEIGHT_UPDATE. Case 1 also broadcasts ITEM_BOUND.
+    Zero weight broadcasts STOCK_DEPLETED.
+    """
     if payload.quadrant not in [1, 2, 3, 4]:
         raise HTTPException(status_code=400, detail="Quadrant must be 1–4")
 
-    result    = database.update_quadrant_weight(payload.quadrant, payload.weight_grams)
+    # Read current state before updating
+    current = database.get_quadrant(payload.quadrant)
+    current_weight = current.get("weight_g", 0.0)
+    delta = payload.weight_grams - current_weight
+
+    bound_item = None  # set if delta-binding fires
+
+    # ── Case 1: item placed after a scan ──────────────────────────────────────
+    if delta >= DELTA_THRESHOLD_ADD and _pending_is_valid():
+        bound_item = pending_scan["item"]
+        scan_conf  = pending_scan["confidence"]
+        result     = database.update_quadrant_item(
+            payload.quadrant, bound_item, payload.weight_grams
+        )
+        _clear_pending()
+
+        print(f"[BIND] 🎯 Auto-bound '{bound_item}' → Quadrant {payload.quadrant} "
+              f"(ΔW={delta:+.0f}g, scan conf={scan_conf:.1f}%)")
+
+        # Notify Flutter: item identity changed
+        await manager.broadcast({
+            "type":       "ITEM_BOUND",
+            "quadrant":   payload.quadrant,
+            "item_name":  bound_item,
+            "weight_g":   payload.weight_grams,
+            "confidence": scan_conf,
+            "message":    f"{bound_item} placed on Quadrant {payload.quadrant}",
+        })
+
+    # ── Case 2 & 3: weight-only update ────────────────────────────────────────
+    else:
+        result = database.update_quadrant_weight(payload.quadrant, payload.weight_grams)
+        if delta >= DELTA_THRESHOLD_ADD:
+            print(f"[WEIGHT] Q{payload.quadrant} +{delta:.0f}g (no pending scan — "
+                  f"keeping item '{result['item_name']}')")
+        elif delta <= DELTA_THRESHOLD_REMOVE:
+            print(f"[WEIGHT] Q{payload.quadrant} {delta:.0f}g consumption detected")
+
     status    = result["status"]
     item_name = result["item_name"]
 
-    # Standard weight update — all clients refresh inventory
+    # Always broadcast the weight update so inventory UI refreshes
     await manager.broadcast({
         "type":      "WEIGHT_UPDATE",
         "quadrant":  payload.quadrant,
@@ -230,7 +321,7 @@ async def update_weight(payload: WeightUpdatePayload):
         "item_name": item_name,
     })
 
-    # Dedicated depletion alert when weight hits zero
+    # Depletion alert when weight hits exactly zero
     if status == "Depleted":
         await manager.broadcast({
             "type":      "STOCK_DEPLETED",
@@ -239,13 +330,40 @@ async def update_weight(payload: WeightUpdatePayload):
             "message":   f"{item_name} in Quadrant {payload.quadrant} is fully depleted. Please restock.",
         })
 
-    return {
+    response = {
         "status":           "success",
         "quadrant":         payload.quadrant,
         "updated_weight_g": payload.weight_grams,
+        "delta_g":          round(delta, 1),
         "stock_status":     status,
         "item_name":        item_name,
     }
+    if bound_item:
+        response["bound_item"] = bound_item
+        response["binding"]    = "auto"
+
+    return response
+
+
+# ─── Pending scan status (for Flutter UI) ─────────────────────────────────────
+
+@app.get("/api/v1/pending-scan")
+def get_pending_scan():
+    """
+    Returns the current pending scan buffer state.
+    Flutter can poll this to show a 'Place on shelf now' prompt.
+    """
+    if _pending_is_valid():
+        age = round(_time.time() - pending_scan["timestamp"], 1)
+        return {
+            "pending":    True,
+            "item":       pending_scan["item"],
+            "confidence": pending_scan["confidence"],
+            "age_seconds": age,
+            "ttl_seconds": PENDING_SCAN_TTL_SECONDS,
+            "expires_in":  round(PENDING_SCAN_TTL_SECONDS - age, 1),
+        }
+    return {"pending": False, "item": None}
 
 
 # ─── Simulate scan (testing / demo) ───────────────────────────────────────────
@@ -274,12 +392,11 @@ async def scan_item(file: UploadFile = File(...)):
     """
     Accepts a JPEG/PNG image from the phone camera or ESP32-CAM.
 
-    Processing pipeline:
-      1. Decode uploaded bytes → PIL Image (RGB)
-      2. Pass to YOLOv8n with conf=0.35
-      3. Filter detections to COCO produce classes only
-      4. Return highest-confidence produce label, or "No Produce Detected"
-      5. Log to SQLite and broadcast over WebSocket
+    Pipeline:
+      1. Decode image → YOLOv8n (conf=0.35)
+      2. If produce detected → store in pending_scan buffer (TTL 30 s)
+         The next weight increase >30 g on any quadrant auto-binds it.
+      3. Log + broadcast SCAN_UPDATE regardless of detection result.
 
     Response: {"success": true, "detected_item": "Banana", "confidence": "94.2%"}
     """
@@ -289,10 +406,19 @@ async def scan_item(file: UploadFile = File(...)):
 
         label, confidence = run_yolo(image)
 
-        # Always log (including "No Produce Detected" so the scan history is honest)
+        # Set pending buffer so update-weight can bind this item to a quadrant
+        if label != "No Produce Detected":
+            pending_scan["item"]       = label
+            pending_scan["confidence"] = confidence
+            pending_scan["timestamp"]  = _time.time()
+            print(f"[SCAN] Detected {label} ({confidence:.1f}%) — "
+                  f"waiting for shelf placement (TTL {PENDING_SCAN_TTL_SECONDS}s)")
+        else:
+            # No produce found — clear any stale pending entry
+            _clear_pending()
+
         database.log_scan_result(label, confidence)
 
-        # Broadcast to all connected Flutter clients
         await manager.broadcast({
             "type":       "SCAN_UPDATE",
             "label":      label,
@@ -300,9 +426,10 @@ async def scan_item(file: UploadFile = File(...)):
         })
 
         return {
-            "success":       True,
-            "detected_item": label,
-            "confidence":    f"{confidence:.1f}%",
+            "success":        True,
+            "detected_item":  label,
+            "confidence":     f"{confidence:.1f}%",
+            "pending_bind":   label != "No Produce Detected",
         }
 
     except Exception as e:
