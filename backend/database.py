@@ -58,10 +58,10 @@ def create_tables():
     cursor.execute("SELECT COUNT(*) FROM inventory")
     if cursor.fetchone()[0] == 0:
         seed_data = [
-            (1, "Banana", 800.0, 1000.0, "Available", "Just now"),
-            (2, "Banana", 600.0, 1000.0, "Available", "Just now"),
-            (3, "Banana", 200.0, 1000.0, "Low Stock", "Just now"),
-            (4, "Banana",  80.0, 1000.0, "Critical",  "Just now"),
+            (1, "Apple",  450.0, 1000.0, "Available", "Just now"),
+            (2, "Banana", 180.0, 1000.0, "Low Stock",  "Just now"),
+            (3, "Orange", 620.0, 1000.0, "Available",  "Just now"),
+            (4, "Carrot",  80.0, 1000.0, "Critical",   "Just now"),
         ]
         cursor.executemany(
             "INSERT INTO inventory (quadrant, item_name, weight_g, max_capacity_g, status, last_updated) VALUES (?, ?, ?, ?, ?, ?)",
@@ -240,9 +240,11 @@ def get_depletion_analytics():
 
 
 def get_fallback_rate(item_name: str) -> float:
-    """Fallback depletion rate when insufficient data for linear regression."""
+    """Fallback depletion rate (g/day) when insufficient data for linear regression."""
     fallback_rates = {
-        "Banana": 130.0,
-        "Empty":    0.0,
+        "Apple":  120.0,
+        "Banana": 150.0,
+        "Orange": 140.0,
+        "Carrot": 100.0,
     }
-    return fallback_rates.get(item_name, 130.0)
+    return fallback_rates.get(item_name, 120.0)

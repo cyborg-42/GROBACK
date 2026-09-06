@@ -25,21 +25,28 @@ class WsService {
   void _openChannel() {
     if (_disposed) return;
     try {
-      final uri = Uri.parse(
-        '${ApiService.baseUrl.replaceFirst('http', 'ws')}/ws',
-      );
+      // Strip any trailing fragment (#) that would break the WS handshake
+      final base = ApiService.baseUrl
+          .replaceFirst(RegExp(r'^http'), 'ws')
+          .replaceAll(RegExp(r'#.*$'), '');
+      final uri = Uri.parse('$base/ws');
+
       _channel = WebSocketChannel.connect(uri);
-      _channel!.stream.listen(
-        (raw) {
-          try {
-            final data = jsonDecode(raw as String) as Map<String, dynamic>;
-            if (!_controller.isClosed) _controller.add(data);
-          } catch (_) {}
-        },
-        onDone: _scheduleReconnect,
-        onError: (_) => _scheduleReconnect(),
-        cancelOnError: true,
-      );
+
+      // ready completes once the handshake succeeds; errors here are caught below
+      _channel!.ready.then((_) {
+        _channel!.stream.listen(
+          (raw) {
+            try {
+              final data = jsonDecode(raw as String) as Map<String, dynamic>;
+              if (!_controller.isClosed) _controller.add(data);
+            } catch (_) {}
+          },
+          onDone: _scheduleReconnect,
+          onError: (_) => _scheduleReconnect(),
+          cancelOnError: true,
+        );
+      }).catchError((Object _) { _scheduleReconnect(); });
     } catch (_) {
       _scheduleReconnect();
     }
