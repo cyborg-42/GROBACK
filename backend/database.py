@@ -79,15 +79,28 @@ def get_all_inventory():
     conn.close()
     return [dict(row) for row in rows]
 
-def update_quadrant_weight(quadrant: int, weight_g: float):
+def update_quadrant_weight(quadrant: int, weight_g: float) -> dict:
+    """
+    Update the weight for a quadrant and return a dict with the computed
+    status and item_name so the caller can broadcast meaningful alerts.
+
+    Status thresholds:
+        weight_g == 0          -> "Depleted"   (triggers push notification)
+        0 < weight_g < 100     -> "Critical"
+        100 <= weight_g < 250  -> "Low Stock"
+        weight_g >= 250        -> "Available"
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
-    status = "Available"
-    if weight_g < 100:
+    if weight_g == 0:
+        status = "Depleted"
+    elif weight_g < 100:
         status = "Critical"
     elif weight_g < 250:
         status = "Low Stock"
+    else:
+        status = "Available"
 
     now_str = datetime.now().strftime("%I:%M %p")
     cursor.execute(
@@ -98,8 +111,16 @@ def update_quadrant_weight(quadrant: int, weight_g: float):
         "INSERT INTO weight_logs (quadrant, weight_g) VALUES (?, ?)",
         (quadrant, weight_g)
     )
+
+    # Fetch item_name so the broadcast can name the depleted item
+    cursor.execute("SELECT item_name FROM inventory WHERE quadrant = ?", (quadrant,))
+    row = cursor.fetchone()
+    item_name = row["item_name"] if row else f"Quadrant {quadrant}"
+
     conn.commit()
     conn.close()
+
+    return {"status": status, "item_name": item_name}
 
 def log_scan_result(label: str, confidence: float):
     conn = get_connection()

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:groback_app/services/api_service.dart';
 import 'package:groback_app/services/ws_service.dart';
+import 'package:groback_app/services/notification_service.dart';
 import 'package:groback_app/models/grocery_item.dart';
 import 'package:groback_app/models/scan_log.dart';
 import 'package:groback_app/models/depletion_metric.dart';
@@ -35,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onWsMessage(Map<String, dynamic> msg) {
     final type = msg['type'] as String?;
+
     if (type == 'SCAN_UPDATE') {
       // Prepend the new scan to the list without a full reload
       final newScan = ScanLog(
@@ -44,9 +46,61 @@ class _HomeScreenState extends State<HomeScreen> {
         timestamp: 'Just now',
       );
       if (mounted) setState(() => _scans = [newScan, ..._scans]);
+
     } else if (type == 'WEIGHT_UPDATE') {
       // Refresh inventory to reflect the new weight
       _refreshData();
+
+      // Fire a local notification for low / critical stock (weight > 0)
+      final status   = msg['status'] as String?;
+      final itemName = msg['item_name'] as String? ?? 'Unknown';
+      final quadrant = (msg['quadrant'] as num?)?.toInt() ?? 0;
+      final weightG  = (msg['weight_g'] as num?)?.toDouble() ?? 0;
+
+      if (status == 'Low Stock' || status == 'Critical') {
+        NotificationService.instance.showLowStockAlert(
+          itemName: itemName,
+          quadrant: quadrant,
+          status: status!,
+          weightG: weightG,
+        );
+      }
+
+    } else if (type == 'STOCK_DEPLETED') {
+      // Full depletion — refresh UI and fire high-priority heads-up notification
+      _refreshData();
+
+      final itemName = msg['item_name'] as String? ?? 'Unknown';
+      final quadrant = (msg['quadrant'] as num?)?.toInt() ?? 0;
+
+      NotificationService.instance.showDepletionAlert(
+        itemName: itemName,
+        quadrant: quadrant,
+      );
+
+      // Also show an in-app banner so the user sees it even if the phone is
+      // unlocked and the notification is suppressed by the OS
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFE53935),
+            duration: const Duration(seconds: 6),
+            content: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded,
+                    color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '🛒 $itemName (Q$quadrant) is fully depleted — restock now!',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
     }
   }
 

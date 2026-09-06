@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'theme/app_theme.dart';
 import 'navigation/bottom_navigation.dart';
+import 'services/notification_service.dart';
 
-void main() {
+void main() async {
+  // Required before any async work before runApp
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize local notifications and create the Android channel
+  await NotificationService.instance.init();
+
   runApp(const GroBackApp());
 }
 

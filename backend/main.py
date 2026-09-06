@@ -186,18 +186,35 @@ async def update_weight(payload: WeightUpdatePayload):
     if payload.quadrant not in [1, 2, 3, 4]:
         raise HTTPException(status_code=400, detail="Quadrant must be between 1 and 4")
 
-    database.update_quadrant_weight(payload.quadrant, payload.weight_grams)
+    # Capture status and item_name returned by the DB layer
+    result = database.update_quadrant_weight(payload.quadrant, payload.weight_grams)
+    status    = result["status"]
+    item_name = result["item_name"]
 
+    # Always broadcast the standard weight update (all connected clients refresh)
     await manager.broadcast({
-        "type": "WEIGHT_UPDATE",
-        "quadrant": payload.quadrant,
-        "weight_g": payload.weight_grams
+        "type":      "WEIGHT_UPDATE",
+        "quadrant":  payload.quadrant,
+        "weight_g":  payload.weight_grams,
+        "status":    status,
+        "item_name": item_name,
     })
 
+    # When a quadrant hits zero, fire a dedicated depletion alert
+    if status == "Depleted":
+        await manager.broadcast({
+            "type":      "STOCK_DEPLETED",
+            "quadrant":  payload.quadrant,
+            "item_name": item_name,
+            "message":   f"{item_name} in Quadrant {payload.quadrant} is fully depleted. Please restock.",
+        })
+
     return {
-        "status": "success",
-        "quadrant": payload.quadrant,
-        "updated_weight_g": payload.weight_grams
+        "status":           "success",
+        "quadrant":         payload.quadrant,
+        "updated_weight_g": payload.weight_grams,
+        "stock_status":     status,
+        "item_name":        item_name,
     }
 
 @app.post("/api/v1/simulate-scan")
